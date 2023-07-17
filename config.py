@@ -173,7 +173,7 @@ def load_config():
         config_path = "./config-template.json"
 
     config_str = read_file(config_path)
-    logger.debug("[INIT] config str: {}".format(config_str))
+    logger.info("[INIT] config str: {}".format(config_str))
 
     # 将json字符串反序列化为dict类型
     config = Config(json.loads(config_str))
@@ -196,7 +196,7 @@ def load_config():
 
     if config.get("debug", False):
         logger.setLevel(logging.DEBUG)
-        logger.debug("[INIT] set log level to DEBUG")
+        logger.info("[INIT] set log level to DEBUG")
 
     logger.info("[INIT] load config: {}".format(config))
 

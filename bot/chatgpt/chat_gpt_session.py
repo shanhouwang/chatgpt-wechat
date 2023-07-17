@@ -25,7 +25,7 @@ class ChatGPTSession(Session):
             precise = False
             if cur_tokens is None:
                 raise e
-            logger.debug("Exception when counting tokens precisely for query: {}".format(e))
+            logger.info("Exception when counting tokens precisely for query: {}".format(e))
         while cur_tokens > max_tokens:
             if len(self.messages) > 2:
                 self.messages.pop(1)
@@ -40,7 +40,7 @@ class ChatGPTSession(Session):
                 logger.warn("user message exceed max_tokens. total_tokens={}".format(cur_tokens))
                 break
             else:
-                logger.debug("max_tokens={}, total_tokens={}, len(messages)={}".format(max_tokens, cur_tokens, len(self.messages)))
+                logger.info("max_tokens={}, total_tokens={}, len(messages)={}".format(max_tokens, cur_tokens, len(self.messages)))
                 break
             if precise:
                 cur_tokens = self.calc_tokens()
@@ -65,7 +65,7 @@ def num_tokens_from_messages(messages, model):
     try:
         encoding = tiktoken.encoding_for_model(model)
     except KeyError:
-        logger.debug("Warning: model not found. Using cl100k_base encoding.")
+        logger.info("Warning: model not found. Using cl100k_base encoding.")
         encoding = tiktoken.get_encoding("cl100k_base")
     if model == "gpt-3.5-turbo":
         tokens_per_message = 4  # every message follows <|start|>{role/name}\n{content}<|end|>\n

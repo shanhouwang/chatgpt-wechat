@@ -30,7 +30,7 @@ def handler_single_msg(msg):
     try:
         cmsg = WechatMessage(msg, False)
     except NotImplementedError as e:
-        logger.debug("[WX]single message {} skipped: {}".format(msg["MsgId"], e))
+        logger.info("[WX]single message {} skipped: {}".format(msg["MsgId"], e))
         return None
     WechatChannel().handle_single(cmsg)
     return None
@@ -41,7 +41,7 @@ def handler_group_msg(msg):
     try:
         cmsg = WechatMessage(msg, True)
     except NotImplementedError as e:
-        logger.debug("[WX]group message {} skipped: {}".format(msg["MsgId"], e))
+        logger.info("[WX]group message {} skipped: {}".format(msg["MsgId"], e))
         return None
     WechatChannel().handle_group(cmsg)
     return None
@@ -56,7 +56,7 @@ def _check(func):
         self.receivedMsgs[msgId] = cmsg
         create_time = cmsg.create_time  # 消息时间戳
         if conf().get("hot_reload") == True and int(create_time) < int(time.time()) - 60:  # 跳过1分钟前的历史消息
-            logger.debug("[WX]history message {} skipped".format(msgId))
+            logger.info("[WX]history message {} skipped".format(msgId))
             return
         return func(self, cmsg)
 
@@ -67,7 +67,7 @@ def _check(func):
 # https://api.qrserver.com/v1/create-qr-code/?size=400×400&data=https://www.abc.com
 # https://api.isoyu.com/qr/?m=1&e=L&p=20&url=https://www.abc.com
 def qrCallback(uuid, status, qrcode):
-    # logger.debug("qrCallback: {} {}".format(uuid,status))
+    # logger.info("qrCallback: {} {}".format(uuid,status))
     if status == "0":
         try:
             from PIL import Image
@@ -142,15 +142,15 @@ class WechatChannel(ChatChannel):
         if cmsg.ctype == ContextType.VOICE:
             if conf().get("speech_recognition") != True:
                 return
-            logger.debug("[WX]receive voice msg: {}".format(cmsg.content))
+            logger.info("[WX]receive voice msg: {}".format(cmsg.content))
         elif cmsg.ctype == ContextType.IMAGE:
-            logger.debug("[WX]receive image msg: {}".format(cmsg.content))
+            logger.info("[WX]receive image msg: {}".format(cmsg.content))
         elif cmsg.ctype == ContextType.PATPAT:
-            logger.debug("[WX]receive patpat msg: {}".format(cmsg.content))
+            logger.info("[WX]receive patpat msg: {}".format(cmsg.content))
         elif cmsg.ctype == ContextType.TEXT:
-            logger.debug("[WX]receive text msg: {}, cmsg={}".format(json.dumps(cmsg._rawmsg, ensure_ascii=False), cmsg))
+            logger.info("[WX]receive text msg: {}, cmsg={}".format(json.dumps(cmsg._rawmsg, ensure_ascii=False), cmsg))
         else:
-            logger.debug("[WX]receive msg: {}, cmsg={}".format(cmsg.content, cmsg))
+            logger.info("[WX]receive msg: {}, cmsg={}".format(cmsg.content, cmsg))
         context = self._compose_context(cmsg.ctype, cmsg.content, isgroup=False, msg=cmsg)
         if context:
             self.produce(context)
@@ -161,16 +161,16 @@ class WechatChannel(ChatChannel):
         if cmsg.ctype == ContextType.VOICE:
             if conf().get("group_speech_recognition") != True:
                 return
-            logger.debug("[WX]receive voice for group msg: {}".format(cmsg.content))
+            logger.info("[WX]receive voice for group msg: {}".format(cmsg.content))
         elif cmsg.ctype == ContextType.IMAGE:
-            logger.debug("[WX]receive image for group msg: {}".format(cmsg.content))
+            logger.info("[WX]receive image for group msg: {}".format(cmsg.content))
         elif cmsg.ctype in [ContextType.JOIN_GROUP, ContextType.PATPAT]:
-            logger.debug("[WX]receive note msg: {}".format(cmsg.content))
+            logger.info("[WX]receive note msg: {}".format(cmsg.content))
         elif cmsg.ctype == ContextType.TEXT:
-            # logger.debug("[WX]receive group msg: {}, cmsg={}".format(json.dumps(cmsg._rawmsg, ensure_ascii=False), cmsg))
+            # logger.info("[WX]receive group msg: {}, cmsg={}".format(json.dumps(cmsg._rawmsg, ensure_ascii=False), cmsg))
             pass
         else:
-            logger.debug("[WX]receive group msg: {}".format(cmsg.content))
+            logger.info("[WX]receive group msg: {}".format(cmsg.content))
         context = self._compose_context(cmsg.ctype, cmsg.content, isgroup=True, msg=cmsg)
         if context:
             self.produce(context)

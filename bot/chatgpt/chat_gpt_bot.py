@@ -1,5 +1,6 @@
 # encoding:utf-8
-
+import json
+import os
 import time
 
 import openai
@@ -15,10 +16,15 @@ from bridge.reply import Reply, ReplyType
 from common.log import logger
 from common.token_bucket import TokenBucket
 from config import conf, load_config
+import fcntl
+import time
+from lib import itchat
+from lib.itchat.content import *
 
 
 # OpenAI对话模型API (可用)
 class ChatGPTBot(Bot, OpenAIImage):
+
     def __init__(self):
         super().__init__()
         # set the default api_key
@@ -63,7 +69,7 @@ class ChatGPTBot(Bot, OpenAIImage):
             if reply:
                 return reply
             session = self.sessions.session_query(query, session_id)
-            logger.debug("[CHATGPT] session query={}".format(session.messages))
+            logger.info("[CHATGPT] session query={}".format(session.messages))
 
             api_key = context.get("openai_api_key")
             model = context.get("gpt_model")
@@ -72,9 +78,8 @@ class ChatGPTBot(Bot, OpenAIImage):
                 new_args = self.args.copy()
                 new_args["model"] = model
             # if context.get('stream'):
-            #     # reply in stream
-            #     return self.reply_text_stream(query, new_query, session_id)
-
+            # reply in stream
+            # return self.reply_text_stream(query, new_query, session_id)
             reply_content = self.reply_text(session, api_key, args=new_args)
             logger.debug(
                 "[CHATGPT] new_query={}, session_id={}, reply_cont={}, completion_tokens={}".format(
@@ -91,16 +96,66 @@ class ChatGPTBot(Bot, OpenAIImage):
                 reply = Reply(ReplyType.TEXT, reply_content["content"])
             else:
                 reply = Reply(ReplyType.ERROR, reply_content["content"])
-                logger.debug("[CHATGPT] reply {} used 0 tokens.".format(reply_content))
+                logger.info("[CHATGPT] reply {} used 0 tokens.".format(reply_content))
             return reply
 
         elif context.type == ContextType.IMAGE_CREATE:
-            ok, retstring = self.create_img(query, 0)
+            mj_success = False
+            mj_image_url = ""
+            try:
+                url = "http://192.168.0.104:8080/mj/submit/imagine"
+                headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                response = requests.request("POST", url, headers=headers, data=json.dumps({"prompt": query}))
+                logger.info(f"[imagine] query: {query}, {response} ")
+                result_id = response.json()["result"]
+                while True:
+                    time.sleep(2)
+                    start_time = time.time()
+                    file_name = f"/Users/shawn/PycharmProjects/chatgpt-on-wechat/channel/mj_notify_data_{result_id}.txt"
+                    # 进行需要轮询的操作
+                    with open(file_name, "r+") as file:
+                        try:
+                            fcntl.flock(file, fcntl.LOCK_EX)  # 获取排它锁
+                            # 在这里进行读取或写入文件的操作
+                            file_contents = file.read()
+                            # logger.info(file_contents)
+                            json_data = json.loads(file_contents)
+                            mj_success = json_data["status"] == "SUCCESS"
+                            mj_image_url = json_data["imageUrl"]
+                            # 提示消息
+                            progress = "正在画：" + json_data["prompt"][0:10] + "..." + json_data["progress"]
+                            itchat.send_msg(progress, toUserName=context["receiver"])
+                        finally:
+                            fcntl.flock(file, fcntl.LOCK_UN)  # 释放锁
+
+                    if mj_success:
+                        os.remove(file_name)
+                        break  # 跳出轮询循环
+
+                    # 检查是否超过1分钟
+                    elapsed_time = time.time() - start_time
+                    if elapsed_time > 60:
+                        print("轮询超时，停止轮询")
+                        break
+                    time.sleep(2)
+            except FileNotFoundError:
+                logger.info(
+                    "File mj_notify_data not found. Please check the file path or create the file if it doesn't exist.")
+            except IOError as e:
+                logger.info(f"An IOError occurred while reading the file: {e}")
+            except Exception as e:
+                logger.info(f"An Exception occurred while reading the file: {e}")
+
+            if mj_success:
+                ok = mj_success
+                ret_string = mj_image_url
+            else:
+                ok, ret_string = self.create_img(query, 0)
             reply = None
             if ok:
-                reply = Reply(ReplyType.IMAGE_URL, retstring)
+                reply = Reply(ReplyType.IMAGE_URL, ret_string)
             else:
-                reply = Reply(ReplyType.ERROR, retstring)
+                reply = Reply(ReplyType.ERROR, ret_string)
             return reply
         else:
             reply = Reply(ReplyType.ERROR, "Bot不支持处理{}类型的消息".format(context.type))
@@ -121,7 +176,7 @@ class ChatGPTBot(Bot, OpenAIImage):
             if args is None:
                 args = self.args
             response = openai.ChatCompletion.create(api_key=api_key, messages=session.messages, **args)
-            # logger.debug("[CHATGPT] response={}".format(response))
+            # logger.info("[CHATGPT] response={}".format(response))
             # logger.info("[ChatGPT] reply={}, total_tokens={}".format(response.choices[0]['message']['content'], response["usage"]["total_tokens"]))
             return {
                 "total_tokens": response["usage"]["total_tokens"],

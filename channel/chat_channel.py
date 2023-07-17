@@ -85,13 +85,13 @@ class ChatChannel(Channel):
             if e_context.is_pass() or context is None:
                 return context
             if cmsg.from_user_id == self.user_id and not config.get("trigger_by_self", True):
-                logger.debug("[WX]self message skipped")
+                logger.info("[WX]self message skipped")
                 return None
 
         # 消息内容匹配过程，并处理content
         if ctype == ContextType.TEXT:
             if first_in and "」\n- - - - - - -" in content:  # 初次匹配 过滤引用消息
-                logger.debug("[WX]reference query skipped")
+                logger.info("[WX]reference query skipped")
                 return None
 
             if context.get("isgroup", False):  # 群聊
@@ -135,17 +135,18 @@ class ChatChannel(Channel):
         elif context.type == ContextType.VOICE:
             if "desire_rtype" not in context and conf().get("voice_reply_voice") and ReplyType.VOICE not in self.NOT_SUPPORT_REPLYTYPE:
                 context["desire_rtype"] = ReplyType.VOICE
-
+        elif context.type == ContextType.IMAGE:
+            logger.info(context)
         return context
 
     def _handle(self, context: Context):
         if context is None or not context.content:
             return
-        logger.debug("[WX] ready to handle context: {}".format(context))
+        logger.info("[WX] ready to handle context: {}".format(context))
         # reply的构建步骤
         reply = self._generate_reply(context)
 
-        logger.debug("[WX] ready to decorate reply: {}".format(reply))
+        logger.info("[WX] ready to decorate reply: {}".format(reply))
         # reply的包装步骤
         reply = self._decorate_reply(context, reply)
 
@@ -161,7 +162,7 @@ class ChatChannel(Channel):
         )
         reply = e_context["reply"]
         if not e_context.is_pass():
-            logger.debug("[WX] ready to handle context: type={}, content={}".format(context.type, context.content))
+            logger.info("[WX] ready to handle context: type={}, content={}".format(context.type, context.content))
             if e_context.is_break():
                 context["generate_breaked_by"] = e_context["breaked_by"]
             if context.type == ContextType.TEXT or context.type == ContextType.IMAGE_CREATE:  # 文字和图片消息
@@ -194,6 +195,7 @@ class ChatChannel(Channel):
                     else:
                         return
             elif context.type == ContextType.IMAGE:  # 图片消息，当前无默认逻辑
+                logger.info(context)
                 pass
             else:
                 logger.error("[WX] unknown context type: {}".format(context.type))
@@ -248,7 +250,7 @@ class ChatChannel(Channel):
             )
             reply = e_context["reply"]
             if not e_context.is_pass() and reply and reply.type:
-                logger.debug("[WX] ready to send reply: {}, context: {}".format(reply, context))
+                logger.info("[WX] ready to send reply: {}, context: {}".format(reply, context))
                 self._send(reply, context)
 
     def _send(self, reply: Reply, context: Context, retry_cnt=0):
@@ -264,7 +266,7 @@ class ChatChannel(Channel):
                 self._send(reply, context, retry_cnt + 1)
 
     def _success_callback(self, session_id, **kwargs):  # 线程正常结束时的回调函数
-        logger.debug("Worker return success, session_id = {}".format(session_id))
+        logger.info("Worker return success, session_id = {}".format(session_id))
 
     def _fail_callback(self, session_id, exception, **kwargs):  # 线程异常结束时的回调函数
         logger.exception("Worker return exception: {}".format(exception))
@@ -309,7 +311,7 @@ class ChatChannel(Channel):
                     if semaphore.acquire(blocking=False):  # 等线程处理完毕才能删除
                         if not context_queue.empty():
                             context = context_queue.get()
-                            logger.debug("[WX] consume context: {}".format(context))
+                            logger.info("[WX] consume context: {}".format(context))
                             future: Future = self.handler_pool.submit(self._handle, context)
                             future.add_done_callback(self._thread_pool_callback(session_id, context=context))
                             if session_id not in self.futures:

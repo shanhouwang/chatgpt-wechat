@@ -19,7 +19,6 @@ def create_bot(bot_type):
     elif bot_type == const.CHATGPT:
         # ChatGPT 网页端web接口
         from bot.chatgpt.chat_gpt_bot import ChatGPTBot
-
         return ChatGPTBot()
 
     elif bot_type == const.OPEN_AI:

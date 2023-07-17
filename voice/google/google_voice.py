@@ -6,6 +6,7 @@ import time
 
 import speech_recognition
 from gtts import gTTS
+from langdetect import detect
 
 from bridge.reply import Reply, ReplyType
 from common.log import logger
@@ -37,7 +38,8 @@ class GoogleVoice(Voice):
         try:
             # Avoid the same filename under multithreading
             mp3File = TmpDir().path() + "reply-" + str(int(time.time())) + "-" + str(hash(text) & 0x7FFFFFFF) + ".mp3"
-            tts = gTTS(text=text, lang="zh")
+            language = detect(text)
+            tts = gTTS(text=text, lang=language)
             tts.save(mp3File)
             logger.info("[Google] textToVoice text={} voice file name={}".format(text, mp3File))
             reply = Reply(ReplyType.VOICE, mp3File)
