@@ -90,9 +90,20 @@ class ChatChannel(Channel):
 
         # 消息内容匹配过程，并处理content
         if ctype == ContextType.TEXT:
-            if first_in and "」\n- - - - - - -" in content:  # 初次匹配 过滤引用消息
-                logger.info("[WX]reference query skipped")
-                return None
+            if first_in and "」\n- - - - - - - - - - - - - - -" in content:  # 初次匹配 过滤引用消息
+                try:
+                    logger.info(f"[引用消息]>>>>>{content}")
+                    # 使用正则表达式匹配「」之间的内容
+                    pattern_brackets = r'「(.*?)」'
+                    content_in_brackets = re.search("「(.*)」", content, flags=re.DOTALL).group(1)
+                    # 使用正则表达式匹配 - - - - - - - - - - - - - - - 后面的文字内容
+                    pattern_dashes = r'- - - - - - - - - - - - - - -\n(.+)'
+                    content_after_dashes = re.findall(pattern_dashes, content)
+                    content = f"{content_after_dashes[0]}：{content_in_brackets.split('：', 1)[1]}"
+                    logger.info(f"[引用消息处理后的]：{content   }")
+                except Exception as e:
+                    logger.info(f"An Exception: {e}")
+                    return None
 
             if context.get("isgroup", False):  # 群聊
                 # 校验关键字
@@ -117,11 +128,13 @@ class ChatChannel(Channel):
             else:  # 单聊
                 match_prefix = check_prefix(content, conf().get("single_chat_prefix", [""]))
                 if match_prefix is not None:  # 判断如果匹配到自定义前缀，则返回过滤掉前缀+空格后的内容
-                    content = content.replace(match_prefix, "", 1).strip()
+                    # content = content.replace(match_prefix, "", 1).strip()
+                    pass
                 elif context["origin_ctype"] == ContextType.VOICE:  # 如果源消息是私聊的语音消息，允许不匹配前缀，放宽条件
                     pass
                 else:
-                    return None
+                    # return None 以后可以根据情况 放开这里否
+                    pass
             content = content.strip()
             img_match_prefix = check_prefix(content, conf().get("image_create_prefix"))
             if img_match_prefix:
@@ -227,7 +240,7 @@ class ChatChannel(Channel):
                         reply_text = "@" + context["msg"].actual_user_nickname + "\n" + reply_text.strip()
                         reply_text = conf().get("group_chat_reply_prefix", "") + reply_text + conf().get("group_chat_reply_suffix", "")
                     else:
-                        reply_text = conf().get("single_chat_reply_prefix", "") + reply_text + conf().get("single_chat_reply_suffix", "")
+                        reply_text = reply_text + conf().get("single_chat_reply_suffix", "")
                     reply.content = reply_text
                 elif reply.type == ReplyType.ERROR or reply.type == ReplyType.INFO:
                     reply.content = "[" + str(reply.type) + "]\n" + reply.content

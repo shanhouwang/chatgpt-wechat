@@ -40,7 +40,6 @@ def run():
 
         if channel_name == "wxy":
             os.environ["WECHATY_LOG"] = "warn"
-            # os.environ['WECHATY_PUPPET_SERVICE_ENDPOINT'] = '127.0.0.1:9001'
 
         channel = channel_factory.create_channel(channel_name)
         if channel_name in ["wx", "wxy", "terminal", "wechatmp", "wechatmp_service", "wechatcom_app"]:

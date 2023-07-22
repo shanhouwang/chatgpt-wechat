@@ -19,7 +19,7 @@ from config import conf, load_config
 import fcntl
 import time
 from lib import itchat
-from lib.itchat.content import *
+import re
 
 
 # OpenAI对话模型API (可用)
@@ -48,6 +48,25 @@ class ChatGPTBot(Bot, OpenAIImage):
             "request_timeout": conf().get("request_timeout", None),  # 请求超时时间，openai接口默认设置为600，对于难问题一般需要较长时间
             "timeout": conf().get("request_timeout", None),  # 重试超时时间，在这个时间内，将会自动重试
         }
+
+    def is_valid_format(self, input_string):
+        # 定义正则表达式匹配模式
+        pattern = r'^\s*\d{16}\s+[UVuV][1-4]\s*$'
+        # 使用re模块的match函数进行匹配
+        if re.match(pattern, input_string):
+            return True
+        else:
+            return False
+
+    def extract_number(self, input_string):
+        pattern = r'\b\d+\b'  # 匹配一个或多个数字，只匹配单词边界处的数字
+        number = re.search(pattern, input_string)
+        return number.group()
+
+    def remove_spaces_and_backspaces(input_string):
+        # 使用正则表达式替换空格和回撤字符
+        cleaned_string = re.sub(r'[ \x08]', '', input_string)
+        return cleaned_string
 
     def reply(self, query, context=None):
         # acquire reply content
@@ -103,48 +122,91 @@ class ChatGPTBot(Bot, OpenAIImage):
             mj_success = False
             mj_image_url = ""
             try:
-                url = "http://192.168.0.104:8080/mj/submit/imagine"
-                headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                response = requests.request("POST", url, headers=headers, data=json.dumps({"prompt": query}))
-                logger.info(f"[imagine] query: {query}, {response} ")
-                result_id = response.json()["result"]
-                while True:
-                    time.sleep(2)
+                use_simple_change = self.is_valid_format(query)
+                if use_simple_change:
+                    url = "http://192.168.0.104:8080/mj/submit/simple-change"
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    response = requests.request("POST", url, headers=headers,
+                                                data=json.dumps({"content": query.upper()}))
+                    logger.info(f"[simple-change] query: {query}, {response.json()} ")
+                    code = response.json()["code"]
+                    result_id = response.json()["result"]
+                else:
+                    url = "http://192.168.0.104:8080/mj/submit/imagine"
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    response = requests.request("POST", url, headers=headers, data=json.dumps({"prompt": query}))
+                    logger.info(f"[imagine] query: {query}, {response} ")
+                    code = response.json()["code"]
+                    result_id = response.json()["result"]
+                if code == 1:
+                    progress_init_tip_once = True
+                    progress_0_20_once = True
+                    progress_30_50_once = True
+                    progress_60_80_once = True
+                    progress_90_100_once = True
                     start_time = time.time()
-                    file_name = f"/Users/shawn/PycharmProjects/chatgpt-on-wechat/channel/mj_notify_data_{result_id}.txt"
-                    # 进行需要轮询的操作
-                    with open(file_name, "r+") as file:
-                        try:
-                            fcntl.flock(file, fcntl.LOCK_EX)  # 获取排它锁
-                            # 在这里进行读取或写入文件的操作
-                            file_contents = file.read()
-                            # logger.info(file_contents)
-                            json_data = json.loads(file_contents)
-                            mj_success = json_data["status"] == "SUCCESS"
-                            mj_image_url = json_data["imageUrl"]
-                            # 提示消息
-                            progress = "正在画：" + json_data["prompt"][0:10] + "..." + json_data["progress"]
-                            itchat.send_msg(progress, toUserName=context["receiver"])
-                        finally:
-                            fcntl.flock(file, fcntl.LOCK_UN)  # 释放锁
+                    while True:
+                        file_name = f"/Users/shawn/PycharmProjects/chatgpt-on-wechat/channel/mj_notify_data_{result_id}.txt"
+                        logger.info(file_name)
+                        # 进行需要轮询的操作
+                        if os.path.exists(file_name):
+                            with open(file_name, "r+") as file:
+                                try:
+                                    fcntl.flock(file, fcntl.LOCK_EX)  # 获取排它锁
+                                    # 在这里进行读取或写入文件的操作
+                                    file_contents = file.read()
+                                    json_data = json.loads(file_contents)
+                                    mj_success = json_data["status"] == "SUCCESS"
+                                    mj_image_url = json_data["imageUrl"]
+                                    # 提示消息
+                                    progress_json = json_data.get("progress", "0%")
+                                    try:
+                                        progress_value = int(progress_json.strip("%"))
+                                    except (ValueError, TypeError):
+                                        progress_value = 0  # 在出现异常情况下设定一个默认值
+                                    if 0 < progress_value < 20 and progress_0_20_once:
+                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
+                                        itchat.send_msg(progress_tip, toUserName=context["receiver"])
+                                        progress_0_20_once = False
+                                    elif 40 < progress_value < 50 and progress_30_50_once:
+                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
+                                        itchat.send_msg(progress_tip, toUserName=context["receiver"])
+                                        progress_30_50_once = False
+                                    elif 60 < progress_value < 80 and progress_60_80_once:
+                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
+                                        itchat.send_msg(progress_tip, toUserName=context["receiver"])
+                                        progress_60_80_once = False
+                                    elif 90 < progress_value < 100 and progress_90_100_once:
+                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
+                                        itchat.send_msg(progress_tip, toUserName=context["receiver"])
+                                        progress_90_100_once = False
+                                    elif progress_value == 0 and progress_init_tip_once:
+                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
+                                        itchat.send_msg(progress_tip, toUserName=context["receiver"])
+                                        progress_init_tip_once = False
+                                finally:
+                                    fcntl.flock(file, fcntl.LOCK_UN)  # 释放锁
 
-                    if mj_success:
-                        os.remove(file_name)
-                        break  # 跳出轮询循环
+                        if mj_success:
+                            os.remove(file_name)
+                            break  # 跳出轮询循环
 
-                    # 检查是否超过1分钟
-                    elapsed_time = time.time() - start_time
-                    if elapsed_time > 60:
-                        print("轮询超时，停止轮询")
-                        break
-                    time.sleep(2)
+                        # 检查是否超过1分钟
+                        elapsed_time = time.time() - start_time
+                        if elapsed_time > 60*5:
+                            print("轮询超时，停止轮询")
+                            break
+                        time.sleep(1)
+                elif code == 21:
+                    mj_success = True
+                    mj_image_url = response.json()["properties"]["imageUrl"]
             except FileNotFoundError:
                 logger.info(
                     "File mj_notify_data not found. Please check the file path or create the file if it doesn't exist.")
             except IOError as e:
                 logger.info(f"An IOError occurred while reading the file: {e}")
             except Exception as e:
-                logger.info(f"An Exception occurred while reading the file: {e}")
+                logger.info(f"An Exception: {e}")
 
             if mj_success:
                 ok = mj_success
