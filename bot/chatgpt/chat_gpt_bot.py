@@ -1,6 +1,9 @@
 # encoding:utf-8
+import base64
+import fcntl
 import json
 import os
+import re
 import time
 
 import openai
@@ -16,10 +19,8 @@ from bridge.reply import Reply, ReplyType
 from common.log import logger
 from common.token_bucket import TokenBucket
 from config import conf, load_config
-import fcntl
-import time
 from lib import itchat
-import re
+import threading
 
 
 # OpenAI对话模型API (可用)
@@ -49,6 +50,34 @@ class ChatGPTBot(Bot, OpenAIImage):
             "timeout": conf().get("request_timeout", None),  # 重试超时时间，在这个时间内，将会自动重试
         }
 
+    def is_just_wechat_pic(self, input_string):
+        pattern = r"^wechat_tmp/\d{6}-\d{6}\.png$"
+        if re.match(pattern, input_string):
+            return True
+        else:
+            return False
+
+    def is_just_desc_wechat_pic(self, input_string):
+        pattern = r"^desc: wechat_tmp/\d{6}-\d{6}\.png$"
+        if re.match(pattern, input_string):
+            return True
+        else:
+            return False
+
+    def get_wechat_pic(self, input_string):
+        pattern = r"(wechat_tmp/\d{6}-\d{6}\.png)"
+        match = re.search(pattern, input_string)
+        if match:
+            matched_value = match.group(1)
+            return matched_value
+        else:
+            return None
+
+    def remove_wechat_pic_value(self, input_string):
+        pattern = r'wechat_tmp/\d+-\d+\.png'
+        result = re.sub(pattern, '', input_string)
+        return result
+
     def is_valid_format(self, input_string):
         # 定义正则表达式匹配模式
         pattern = r'^\s*\d{16}\s+[UVuV][1-4]\s*$'
@@ -68,46 +97,49 @@ class ChatGPTBot(Bot, OpenAIImage):
         cleaned_string = re.sub(r'[ \x08]', '', input_string)
         return cleaned_string
 
+    def get_chatgpt_content(self, session_id, query, context):
+        reply = None
+        clear_memory_commands = conf().get("clear_memory_commands", ["#清除记忆"])
+        if query in clear_memory_commands:
+            self.sessions.clear_session(session_id)
+            reply = Reply(ReplyType.INFO, "记忆已清除")
+        elif query == "#清除所有":
+            self.sessions.clear_all_session()
+            reply = Reply(ReplyType.INFO, "所有人记忆已清除")
+        elif query == "#更新配置":
+            load_config()
+            reply = Reply(ReplyType.INFO, "配置已更新")
+        if reply:
+            return reply
+        session = self.sessions.session_query(query, session_id)
+        logger.info("[CHATGPT] session query={}".format(session.messages))
+
+        api_key = context.get("openai_api_key")
+        model = context.get("gpt_model")
+        new_args = None
+        if model:
+            new_args = self.args.copy()
+            new_args["model"] = model
+        # if context.get('stream'):
+        # reply in stream
+        # return self.reply_text_stream(query, new_query, session_id)
+        reply_content = self.reply_text(session, api_key, args=new_args)
+        logger.debug(
+            "[CHATGPT] new_query={}, session_id={}, reply_cont={}, completion_tokens={}".format(
+                session.messages,
+                session_id,
+                reply_content["content"],
+                reply_content["completion_tokens"],
+            )
+        )
+        return reply_content
+
     def reply(self, query, context=None):
         # acquire reply content
         if context.type == ContextType.TEXT:
             logger.info("[CHATGPT] query={}".format(query))
-
             session_id = context["session_id"]
-            reply = None
-            clear_memory_commands = conf().get("clear_memory_commands", ["#清除记忆"])
-            if query in clear_memory_commands:
-                self.sessions.clear_session(session_id)
-                reply = Reply(ReplyType.INFO, "记忆已清除")
-            elif query == "#清除所有":
-                self.sessions.clear_all_session()
-                reply = Reply(ReplyType.INFO, "所有人记忆已清除")
-            elif query == "#更新配置":
-                load_config()
-                reply = Reply(ReplyType.INFO, "配置已更新")
-            if reply:
-                return reply
-            session = self.sessions.session_query(query, session_id)
-            logger.info("[CHATGPT] session query={}".format(session.messages))
-
-            api_key = context.get("openai_api_key")
-            model = context.get("gpt_model")
-            new_args = None
-            if model:
-                new_args = self.args.copy()
-                new_args["model"] = model
-            # if context.get('stream'):
-            # reply in stream
-            # return self.reply_text_stream(query, new_query, session_id)
-            reply_content = self.reply_text(session, api_key, args=new_args)
-            logger.debug(
-                "[CHATGPT] new_query={}, session_id={}, reply_cont={}, completion_tokens={}".format(
-                    session.messages,
-                    session_id,
-                    reply_content["content"],
-                    reply_content["completion_tokens"],
-                )
-            )
+            reply_content = self.get_chatgpt_content(session_id, query, context)
             if reply_content["completion_tokens"] == 0 and len(reply_content["content"]) > 0:
                 reply = Reply(ReplyType.ERROR, reply_content["content"])
             elif reply_content["completion_tokens"] > 0:
@@ -121,10 +153,30 @@ class ChatGPTBot(Bot, OpenAIImage):
         elif context.type == ContextType.IMAGE_CREATE:
             mj_success = False
             mj_image_url = ""
+            prompts_desc = None
             try:
+                is_just_desc_wechat_pic = self.is_just_desc_wechat_pic(query)
+                wechat_pic_path = self.get_wechat_pic(query)
                 use_simple_change = self.is_valid_format(query)
-                if use_simple_change:
-                    url = "http://192.168.0.104:8080/mj/submit/simple-change"
+                base64_wechat_pic = None
+                if is_just_desc_wechat_pic or wechat_pic_path:
+                    try:
+                        file_path = f"/Users/shanhouwang/PycharmProjects/chatgpt-wechat/{wechat_pic_path}"
+                        with open(file_path, "rb") as file:
+                            encoded_string = base64.b64encode(file.read()).decode("utf-8")
+                            base64_wechat_pic = f"data:image/png;base64,{encoded_string}"
+                    except Exception as e:
+                        logger.info(f"An Exception: {e}")
+
+                if is_just_desc_wechat_pic:
+                    url = "http://10.253.63.241:8080/mj/submit/describe"
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64": base64_wechat_pic}))
+                    logger.info(f"[describe]: {query}, {response.json()} ")
+                    code = response.json()["code"]
+                    result_id = response.json()["result"]
+                elif use_simple_change:
+                    url = "http://10.253.63.241:8080/mj/submit/simple-change"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
                     response = requests.request("POST", url, headers=headers,
                                                 data=json.dumps({"content": query.upper()}))
@@ -132,9 +184,9 @@ class ChatGPTBot(Bot, OpenAIImage):
                     code = response.json()["code"]
                     result_id = response.json()["result"]
                 else:
-                    url = "http://192.168.0.104:8080/mj/submit/imagine"
+                    url = "http://10.253.63.241:8080/mj/submit/imagine"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                    response = requests.request("POST", url, headers=headers, data=json.dumps({"prompt": query}))
+                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64": base64_wechat_pic, "prompt": query}))
                     logger.info(f"[imagine] query: {query}, {response} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
@@ -145,8 +197,8 @@ class ChatGPTBot(Bot, OpenAIImage):
                     progress_60_80_once = True
                     progress_90_100_once = True
                     start_time = time.time()
+                    file_name = f"/Users/shanhouwang/PycharmProjects/chatgpt-wechat/channel/mj_notify_data_{result_id}.txt"
                     while True:
-                        file_name = f"/Users/shawn/PycharmProjects/chatgpt-on-wechat/channel/mj_notify_data_{result_id}.txt"
                         logger.info(file_name)
                         # 进行需要轮询的操作
                         if os.path.exists(file_name):
@@ -156,32 +208,40 @@ class ChatGPTBot(Bot, OpenAIImage):
                                     # 在这里进行读取或写入文件的操作
                                     file_contents = file.read()
                                     json_data = json.loads(file_contents)
-                                    mj_success = json_data["status"] == "SUCCESS"
-                                    mj_image_url = json_data["imageUrl"]
+                                    mj_success = json_data.get("status") == "SUCCESS"
+                                    if mj_success and json_data.get("action") == "DESCRIBE":
+                                        prompts_desc = json_data.get("prompt")
+                                        itchat.send_msg(f"任务ID: {result_id} {prompt}... 进度100%",
+                                                        toUserName=context["receiver"])
+                                        os.remove(file_name)
+                                        break
+                                    mj_image_url = json_data.get("imageUrl")
                                     # 提示消息
                                     progress_json = json_data.get("progress", "0%")
+                                    prompt = ""
                                     try:
                                         progress_value = int(progress_json.strip("%"))
-                                    except (ValueError, TypeError):
+                                        prompt = json_data.get("prompt")[0:10]
+                                    except Exception as e:
+                                        logger.info(f"A Exception: {e}")
                                         progress_value = 0  # 在出现异常情况下设定一个默认值
+                                    if prompt:
+                                        prompt = f"({prompt})"
+                                    progress_tip = f"任务ID: {result_id} {prompt}... 进度{progress_json}"
+
                                     if 0 < progress_value < 20 and progress_0_20_once:
-                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
                                         itchat.send_msg(progress_tip, toUserName=context["receiver"])
                                         progress_0_20_once = False
                                     elif 40 < progress_value < 50 and progress_30_50_once:
-                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
                                         itchat.send_msg(progress_tip, toUserName=context["receiver"])
                                         progress_30_50_once = False
                                     elif 60 < progress_value < 80 and progress_60_80_once:
-                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
                                         itchat.send_msg(progress_tip, toUserName=context["receiver"])
                                         progress_60_80_once = False
-                                    elif 90 < progress_value < 100 and progress_90_100_once:
-                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
+                                    elif 90 < progress_value <= 100 and progress_90_100_once:
                                         itchat.send_msg(progress_tip, toUserName=context["receiver"])
                                         progress_90_100_once = False
                                     elif progress_value == 0 and progress_init_tip_once:
-                                        progress_tip = "正在画：" + json_data["prompt"][0:10] + f"({result_id})..." + json_data["progress"]
                                         itchat.send_msg(progress_tip, toUserName=context["receiver"])
                                         progress_init_tip_once = False
                                 finally:
@@ -190,33 +250,46 @@ class ChatGPTBot(Bot, OpenAIImage):
                         if mj_success:
                             os.remove(file_name)
                             break  # 跳出轮询循环
-
                         # 检查是否超过1分钟
                         elapsed_time = time.time() - start_time
-                        if elapsed_time > 60*5:
+                        if elapsed_time > 60 * 5:
                             print("轮询超时，停止轮询")
                             break
                         time.sleep(1)
                 elif code == 21:
                     mj_success = True
                     mj_image_url = response.json()["properties"]["imageUrl"]
-            except FileNotFoundError:
-                logger.info(
-                    "File mj_notify_data not found. Please check the file path or create the file if it doesn't exist.")
             except IOError as e:
                 logger.info(f"An IOError occurred while reading the file: {e}")
             except Exception as e:
+                itchat.send_msg(f"出现了异常: {e}", toUserName=context["receiver"])
                 logger.info(f"An Exception: {e}")
 
-            if mj_success:
+            if prompts_desc:
+                session_id = context["session_id"]
+                reply_content = self.get_chatgpt_content(session_id, f"翻译以下内容：{prompts_desc}", context)
+                if reply_content["completion_tokens"] == 0 and len(reply_content["content"]) > 0:
+                    reply = prompts_desc
+                elif reply_content["completion_tokens"] > 0:
+                    reply = reply_content["content"]
+                else:
+                    reply = prompts_desc
+                itchat.send_msg(reply, toUserName=context["receiver"])
+                current_thread = threading.current_thread()
+                thread_name = current_thread.name
+                logger.info(f"当前线程的名字是：{thread_name}")
+                return None
+            elif mj_success:
                 ok = mj_success
                 ret_string = mj_image_url
             else:
                 ok, ret_string = self.create_img(query, 0)
             reply = None
             if ok:
+                itchat.send_msg(ret_string, toUserName=context["receiver"])
                 reply = Reply(ReplyType.IMAGE_URL, ret_string)
             else:
+                itchat.send_msg("MJ作图出现了异常，使用兜底生成图片策略", toUserName=context["receiver"])
                 reply = Reply(ReplyType.ERROR, ret_string)
             return reply
         else:

@@ -11,6 +11,7 @@ from channel.channel import Channel
 from common.dequeue import Dequeue
 from common.log import logger
 from config import conf
+from lib import itchat
 from plugins import *
 
 try:
@@ -99,8 +100,8 @@ class ChatChannel(Channel):
                     # 使用正则表达式匹配 - - - - - - - - - - - - - - - 后面的文字内容
                     pattern_dashes = r'- - - - - - - - - - - - - - -\n(.+)'
                     content_after_dashes = re.findall(pattern_dashes, content)
-                    content = f"{content_after_dashes[0]}：{content_in_brackets.split('：', 1)[1]}"
-                    logger.info(f"[引用消息处理后的]：{content   }")
+                    content = f"{content_after_dashes[0]}: {content_in_brackets.split('：', 1)[1]}"
+                    logger.info(f"[引用消息处理后的]：{content}")
                 except Exception as e:
                     logger.info(f"An Exception: {e}")
                     return None
@@ -140,6 +141,8 @@ class ChatChannel(Channel):
             if img_match_prefix:
                 content = content.replace(img_match_prefix, "", 1)
                 context.type = ContextType.IMAGE_CREATE
+            elif self.is_just_desc_wechat_pic(content):
+                context.type = ContextType.IMAGE_CREATE
             else:
                 context.type = ContextType.TEXT
             context.content = content.strip()
@@ -149,8 +152,16 @@ class ChatChannel(Channel):
             if "desire_rtype" not in context and conf().get("voice_reply_voice") and ReplyType.VOICE not in self.NOT_SUPPORT_REPLYTYPE:
                 context["desire_rtype"] = ReplyType.VOICE
         elif context.type == ContextType.IMAGE:
-            logger.info(context)
+            logger.info(f"{context}")
+            itchat.send_msg(context.content, toUserName=context["receiver"])
         return context
+
+    def is_just_desc_wechat_pic(self, input_string):
+        pattern = r"^desc: wechat_tmp/\d{6}-\d{6}\.png$"
+        if re.match(pattern, input_string):
+            return True
+        else:
+            return False
 
     def _handle(self, context: Context):
         if context is None or not context.content:
@@ -212,7 +223,6 @@ class ChatChannel(Channel):
                 pass
             else:
                 logger.error("[WX] unknown context type: {}".format(context.type))
-                return
         return reply
 
     def _decorate_reply(self, context: Context, reply: Reply) -> Reply:
