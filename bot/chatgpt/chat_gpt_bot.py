@@ -50,6 +50,47 @@ class ChatGPTBot(Bot, OpenAIImage):
             "timeout": conf().get("request_timeout", None),  # 重试超时时间，在这个时间内，将会自动重试
         }
 
+    def get_http_file_base64(self, url):
+        # 发送HTTP请求，下载文件内容
+        response = requests.get(url)
+        if response.status_code == 200:
+            # 获取文件内容
+            file_content = response.content
+            # 将文件内容转换为Base64编码
+            base64_data = base64.b64encode(file_content)
+            base64_string = base64_data.decode('utf-8')
+
+            return base64_string
+        else:
+            logger.info(f"无法下载文件，HTTP状态码：{response.status_code}")
+            return None
+
+    def get_local_wechat_pic_base64(self, wechat_pic_path):
+        base64_wechat_pic = None
+        try:
+            file_path = f"/Users/shanhouwang/PycharmProjects/chatgpt-wechat/{wechat_pic_path}"
+            with open(file_path, "rb") as file:
+                base64_wechat_pic = base64.b64encode(file.read()).decode("utf-8")
+        except Exception as e:
+            logger.info(f"An Exception: {e}")
+        finally:
+            return base64_wechat_pic
+
+    def extract_http_local_urls(self, input_string):
+        # 定义图片链接的正则表达式
+        image_urls_pattern = r"http[s]?://[^\s]+(?:jpg|jpeg|png|gif|bmp|svg)"
+
+        # 定义图片链接的正则表达式
+        pattern = r"wechat_tmp/[^\s]+(?:jpg|jpeg|png|gif|bmp|svg)"
+
+        # 使用 re.findall() 查找所有匹配的图片链接
+        image_http_urls = re.findall(image_urls_pattern, input_string, re.IGNORECASE)
+
+        # 使用 re.findall() 查找所有匹配的图片链接和本地文件地址
+        image_local_urls = re.findall(pattern, input_string, re.IGNORECASE)
+
+        return image_http_urls, image_local_urls
+
     def is_just_wechat_pic(self, input_string):
         pattern = r"^wechat_tmp/\d{6}-\d{6}\.png$"
         if re.match(pattern, input_string):
@@ -58,7 +99,7 @@ class ChatGPTBot(Bot, OpenAIImage):
             return False
 
     def is_just_desc_wechat_pic(self, input_string):
-        pattern = r"^desc: wechat_tmp/\d{6}-\d{6}\.png$"
+        pattern = r"^desc wechat_tmp/\d{6}-\d{6}\.png$"
         if re.match(pattern, input_string):
             return True
         else:
@@ -156,18 +197,13 @@ class ChatGPTBot(Bot, OpenAIImage):
             prompts_desc = None
             try:
                 is_just_desc_wechat_pic = self.is_just_desc_wechat_pic(query)
+                image_http_urls, image_local_urls = self.extract_http_local_urls(query)
+                logger.info(f"{image_http_urls} {image_local_urls}")
                 wechat_pic_path = self.get_wechat_pic(query)
                 use_simple_change = self.is_valid_format(query)
                 base64_wechat_pic = None
-                if is_just_desc_wechat_pic or wechat_pic_path:
-                    try:
-                        file_path = f"/Users/shanhouwang/PycharmProjects/chatgpt-wechat/{wechat_pic_path}"
-                        with open(file_path, "rb") as file:
-                            encoded_string = base64.b64encode(file.read()).decode("utf-8")
-                            base64_wechat_pic = f"data:image/png;base64,{encoded_string}"
-                    except Exception as e:
-                        logger.info(f"An Exception: {e}")
-
+                if wechat_pic_path:
+                    base64_wechat_pic = f"data:image/png;base64,{self.get_local_wechat_pic_base64(wechat_pic_path)}"
                 if is_just_desc_wechat_pic:
                     url = "http://10.253.63.241:8080/mj/submit/describe"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -175,19 +211,40 @@ class ChatGPTBot(Bot, OpenAIImage):
                     logger.info(f"[describe]: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
+                elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(image_local_urls) > 1:
+                    url = "http://10.253.63.241:8080/mj/submit/blend"
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    base64_array = []
+                    for http_url in image_http_urls:
+                        http_file_base64 = self.get_http_file_base64(http_url)
+                        if http_file_base64:
+                            base64_array.append(f"data:image/png;base64,{http_file_base64}")
+                    for path in image_local_urls:
+                        local_file_base64 = self.get_local_wechat_pic_base64(path)
+                        if local_file_base64:
+                            base64_array.append(f"data:image/png;base64,{self.get_local_wechat_pic_base64(path)}")
+                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64Array": base64_array, "dimensions": "SQUARE"}))
+                    logger.info(f"[blend]: {query}, {response.json()} ")
+                    code = response.json()["code"]
+                    result_id = response.json()["result"]
                 elif use_simple_change:
                     url = "http://10.253.63.241:8080/mj/submit/simple-change"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                    response = requests.request("POST", url, headers=headers,
-                                                data=json.dumps({"content": query.upper()}))
+                    response = requests.request("POST", url, headers=headers, data=json.dumps({"content": query.upper()}))
                     logger.info(f"[simple-change] query: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
                 else:
                     url = "http://10.253.63.241:8080/mj/submit/imagine"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64": base64_wechat_pic, "prompt": query}))
-                    logger.info(f"[imagine] query: {query}, {response} ")
+                    if base64_wechat_pic:
+                        query_new = self.remove_wechat_pic_value(query)
+                    else:
+                        query_new = query.rstrip()
+                    if len(query_new) < 1:
+                        return None
+                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64": base64_wechat_pic, "prompt": query_new}))
+                    logger.info(f"[imagine] query: {query_new}, {base64_wechat_pic is not None} {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
                 if code == 1:
@@ -211,8 +268,8 @@ class ChatGPTBot(Bot, OpenAIImage):
                                     mj_success = json_data.get("status") == "SUCCESS"
                                     if mj_success and json_data.get("action") == "DESCRIBE":
                                         prompts_desc = json_data.get("prompt")
-                                        itchat.send_msg(f"任务ID: {result_id} {prompt}... 进度100%",
-                                                        toUserName=context["receiver"])
+                                        itchat.send_msg(f"任务ID: {result_id} {prompt}... 进度100%", toUserName=context["receiver"])
+                                        itchat.send_msg(json_data.get("imageUrl"), toUserName=context["receiver"])
                                         os.remove(file_name)
                                         break
                                     mj_image_url = json_data.get("imageUrl")
@@ -252,7 +309,8 @@ class ChatGPTBot(Bot, OpenAIImage):
                             break  # 跳出轮询循环
                         # 检查是否超过1分钟
                         elapsed_time = time.time() - start_time
-                        if elapsed_time > 60 * 5:
+                        if elapsed_time > 60 * 3:
+                            os.remove(file_name)
                             print("轮询超时，停止轮询")
                             break
                         time.sleep(1)
@@ -262,10 +320,14 @@ class ChatGPTBot(Bot, OpenAIImage):
             except IOError as e:
                 logger.info(f"An IOError occurred while reading the file: {e}")
             except Exception as e:
+                os.remove(file_name)
                 itchat.send_msg(f"出现了异常: {e}", toUserName=context["receiver"])
                 logger.info(f"An Exception: {e}")
 
             if prompts_desc:
+                itchat.send_msg(prompts_desc, toUserName=context["receiver"])
+                time.sleep(2)
+                itchat.send_msg("正在翻译成中文", toUserName=context["receiver"])
                 session_id = context["session_id"]
                 reply_content = self.get_chatgpt_content(session_id, f"翻译以下内容：{prompts_desc}", context)
                 if reply_content["completion_tokens"] == 0 and len(reply_content["content"]) > 0:
@@ -282,15 +344,12 @@ class ChatGPTBot(Bot, OpenAIImage):
             elif mj_success:
                 ok = mj_success
                 ret_string = mj_image_url
+                itchat.send_msg(ret_string, toUserName=context["receiver"])
             else:
-                ok, ret_string = self.create_img(query, 0)
+                itchat.send_msg(f"任务ID: {result_id} 作图出现了异常", toUserName=context["receiver"])
             reply = None
             if ok:
-                itchat.send_msg(ret_string, toUserName=context["receiver"])
                 reply = Reply(ReplyType.IMAGE_URL, ret_string)
-            else:
-                itchat.send_msg("MJ作图出现了异常，使用兜底生成图片策略", toUserName=context["receiver"])
-                reply = Reply(ReplyType.ERROR, ret_string)
             return reply
         else:
             reply = Reply(ReplyType.ERROR, "Bot不支持处理{}类型的消息".format(context.type))

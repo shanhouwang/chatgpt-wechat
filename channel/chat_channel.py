@@ -94,13 +94,11 @@ class ChatChannel(Channel):
             if first_in and "」\n- - - - - - - - - - - - - - -" in content:  # 初次匹配 过滤引用消息
                 try:
                     logger.info(f"[引用消息]>>>>>{content}")
-                    # 使用正则表达式匹配「」之间的内容
-                    pattern_brackets = r'「(.*?)」'
                     content_in_brackets = re.search("「(.*)」", content, flags=re.DOTALL).group(1)
                     # 使用正则表达式匹配 - - - - - - - - - - - - - - - 后面的文字内容
                     pattern_dashes = r'- - - - - - - - - - - - - - -\n(.+)'
                     content_after_dashes = re.findall(pattern_dashes, content)
-                    content = f"{content_after_dashes[0]}: {content_in_brackets.split('：', 1)[1]}"
+                    content = f"{content_after_dashes[0]} {content_in_brackets.split('：', 1)[1]}"
                     logger.info(f"[引用消息处理后的]：{content}")
                 except Exception as e:
                     logger.info(f"An Exception: {e}")
@@ -138,10 +136,13 @@ class ChatChannel(Channel):
                     pass
             content = content.strip()
             img_match_prefix = check_prefix(content, conf().get("image_create_prefix"))
+            image_http_urls, image_local_urls = self.extract_http_local_urls(content)
             if img_match_prefix:
                 content = content.replace(img_match_prefix, "", 1)
                 context.type = ContextType.IMAGE_CREATE
             elif self.is_just_desc_wechat_pic(content):
+                context.type = ContextType.IMAGE_CREATE
+            elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(image_local_urls) > 1:
                 context.type = ContextType.IMAGE_CREATE
             else:
                 context.type = ContextType.TEXT
@@ -156,8 +157,23 @@ class ChatChannel(Channel):
             itchat.send_msg(context.content, toUserName=context["receiver"])
         return context
 
+    def extract_http_local_urls(self, input_string):
+        # 定义图片链接的正则表达式
+        image_urls_pattern = r"http[s]?://[^\s]+(?:jpg|jpeg|png|gif|bmp|svg)"
+
+        # 定义图片链接的正则表达式
+        pattern = r"wechat_tmp/[^\s]+(?:jpg|jpeg|png|gif|bmp|svg)"
+
+        # 使用 re.findall() 查找所有匹配的图片链接
+        image_http_urls = re.findall(image_urls_pattern, input_string, re.IGNORECASE)
+
+        # 使用 re.findall() 查找所有匹配的图片链接和本地文件地址
+        image_local_urls = re.findall(pattern, input_string, re.IGNORECASE)
+
+        return image_http_urls, image_local_urls
+
     def is_just_desc_wechat_pic(self, input_string):
-        pattern = r"^desc: wechat_tmp/\d{6}-\d{6}\.png$"
+        pattern = r"^desc wechat_tmp/\d{6}-\d{6}\.png$"
         if re.match(pattern, input_string):
             return True
         else:
