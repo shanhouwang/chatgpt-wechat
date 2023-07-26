@@ -26,6 +26,7 @@ class WechatMessage(ChatMessage):
             self.ctype = ContextType.IMAGE
             self.content = TmpDir().path() + itchat_msg["FileName"]  # content直接存临时目录路径
             self._prepare_fn = lambda: itchat_msg.download(self.content)
+            itchat_msg.download()
         elif itchat_msg["Type"] == NOTE and itchat_msg["MsgType"] == 10000:
             if is_group and ("加入群聊" in itchat_msg["Content"] or "加入了群聊" in itchat_msg["Content"]):
                 self.ctype = ContextType.JOIN_GROUP
