@@ -13,6 +13,7 @@ from common.log import logger
 from config import conf
 from lib import itchat
 from plugins import *
+from channel.common_utils import Utils
 
 try:
     from voice.audio_convert import any_to_wav
@@ -109,10 +110,15 @@ class ChatChannel(Channel):
                 match_prefix = check_prefix(content, conf().get("group_chat_prefix"))
                 match_contain = check_contain(content, conf().get("group_chat_keyword"))
                 flag = False
+
                 if match_prefix is not None or match_contain is not None:
                     flag = True
                     if match_prefix:
                         content = content.replace(match_prefix, "", 1).strip()
+
+                if Utils.check_prefix_mj(content) is True or Utils.check_prefix_sd(content):
+                    flag = True
+
                 if context["msg"].is_at:
                     logger.info("[WX]receive group at")
                     if not conf().get("group_at_off", False):
@@ -143,6 +149,8 @@ class ChatChannel(Channel):
             elif self.is_just_desc_wechat_pic(content):
                 context.type = ContextType.IMAGE_CREATE
             elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(image_local_urls) > 1:
+                context.type = ContextType.IMAGE_CREATE
+            elif Utils.check_prefix_mj(content) is True or Utils.check_prefix_sd(content):
                 context.type = ContextType.IMAGE_CREATE
             else:
                 context.type = ContextType.TEXT

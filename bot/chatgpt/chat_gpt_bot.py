@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import re
+import threading
 import time
 
 import openai
@@ -16,11 +17,11 @@ from bot.openai.open_ai_image import OpenAIImage
 from bot.session_manager import SessionManager
 from bridge.context import ContextType
 from bridge.reply import Reply, ReplyType
+from channel.common_utils import Utils
 from common.log import logger
 from common.token_bucket import TokenBucket
 from config import conf, load_config
 from lib import itchat
-import threading
 
 
 # OpenAI对话模型API (可用)
@@ -195,6 +196,11 @@ class ChatGPTBot(Bot, OpenAIImage):
             mj_success = False
             mj_image_url = ""
             prompts_desc = None
+            use_mj_prefix = Utils.check_prefix_mj(query)
+            use_sd_prefix = Utils.check_prefix_sd(query)
+            check_prefix_mj_u = Utils.check_prefix_mj_u(query)
+            check_prefix_mj_v = Utils.check_prefix_mj_v(query)
+            check_prefix_mj_r = Utils.check_prefix_mj_r(query)
             try:
                 is_just_desc_wechat_pic = self.is_just_desc_wechat_pic(query)
                 image_http_urls, image_local_urls = self.extract_http_local_urls(query)
@@ -211,6 +217,7 @@ class ChatGPTBot(Bot, OpenAIImage):
                     logger.info(f"[describe]: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
+                    description = response.json()["description"]
                 elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(image_local_urls) > 1:
                     url = "http://10.253.63.241:8080/mj/submit/blend"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -227,6 +234,7 @@ class ChatGPTBot(Bot, OpenAIImage):
                     logger.info(f"[blend]: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
+                    description = response.json()["description"]
                 elif use_simple_change:
                     url = "http://10.253.63.241:8080/mj/submit/simple-change"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -234,7 +242,36 @@ class ChatGPTBot(Bot, OpenAIImage):
                     logger.info(f"[simple-change] query: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
+                    description = response.json()["description"]
+                elif (use_mj_prefix is True or use_sd_prefix is True) and (check_prefix_mj_u or check_prefix_mj_v or check_prefix_mj_r):
+                    url = "http://10.253.63.241:8080/mj/submit/change"
+                    action = None
+                    index = None
+                    if check_prefix_mj_u:
+                        action = "UPSCALE"
+                        index = Utils.extract_mj_u_v_index(query)
+                    elif check_prefix_mj_v:
+                        action = "VARIATION"
+                        index = Utils.extract_mj_u_v_index(query)
+                    else:
+                        action = "REROLL"
+                    task_id = None
+                    task_id = Utils.extract_ref_msg_mj_task_id(query)
+                    if task_id is None:
+                        task_id = Utils.extract_mj_task_id(query)
+                    params = {"action": action}
+                    if index is not None:
+                        params["index"] = index
+                    params["taskId"] = task_id
+                    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+                    response = requests.request("POST", url, headers=headers, data=json.dumps(params))
+                    logger.info(f"[change] query: {query}, params: {json.dumps(params)}, response: {response.json()} ")
+                    code = response.json()["code"]
+                    result_id = response.json()["result"]
+                    description = response.json()["description"]
                 else:
+                    if use_mj_prefix is True or use_sd_prefix is True:
+                        query = Utils.remove_prefix_mj_sd(query)
                     url = "http://10.253.63.241:8080/mj/submit/imagine"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
                     if base64_wechat_pic:
@@ -247,6 +284,7 @@ class ChatGPTBot(Bot, OpenAIImage):
                     logger.info(f"[imagine] query: {query_new}, {base64_wechat_pic is not None} {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
+                    description = response.json()["description"]
                 if code == 1:
                     progress_init_tip_once = True
                     progress_0_20_once = True
@@ -346,7 +384,7 @@ class ChatGPTBot(Bot, OpenAIImage):
                 ret_string = mj_image_url
                 itchat.send_msg(ret_string, toUserName=context["receiver"])
             else:
-                itchat.send_msg(f"任务ID: {result_id} 作图出现了异常", toUserName=context["receiver"])
+                itchat.send_msg(f"任务ID: {result_id} 作图出现了异常：{description}", toUserName=context["receiver"])
             reply = None
             if ok:
                 reply = Reply(ReplyType.IMAGE_URL, ret_string)
