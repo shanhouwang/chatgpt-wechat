@@ -7,30 +7,35 @@ class Utils:
     def remove_prefix_mj_sd(input_string):
         if input_string.startswith("$mj"):
             return input_string[len("$mj"):]
+        elif input_string.startswith("mj "):
+            return input_string[len("mj "):]
         elif input_string.startswith("$sd"):
             return input_string[len("$sd"):]
+        elif input_string.startswith("sd "):
+            return input_string[len("sd "):]
         else:
             return input_string
 
     @staticmethod
     def check_prefix_mj(input_string):
-        return input_string.startswith("$mj")
+        return input_string.startswith("$mj") or input_string.startswith("mj ") or Utils.check_prefix_mj_u(
+            input_string) or Utils.check_prefix_mj_v(input_string) or Utils.check_prefix_mj_r(input_string)
 
     @staticmethod
     def check_prefix_sd(input_string):
-        return input_string.startswith("$sd")
+        return input_string.startswith("$sd") or input_string.startswith("$sd ")
 
     @staticmethod
     def check_prefix_mj_u(input_string):
-        return input_string.startswith("$mju") or input_string.startswith("$mj u")
+        return input_string.startswith("$mju") or input_string.startswith("mju")
 
     @staticmethod
     def check_prefix_mj_v(input_string):
-        return input_string.startswith("$mjv") or input_string.startswith("$mj v")
+        return input_string.startswith("$mjv") or input_string.startswith("mjv")
 
     @staticmethod
     def check_prefix_mj_r(input_string):
-        return input_string.startswith("$mjr") or input_string.startswith("$mj r")
+        return input_string.startswith("$mjr") or input_string.startswith("mjr")
 
     @staticmethod
     def extract_ref_msg_mj_task_id(input_string):
