@@ -69,7 +69,7 @@ class ChatGPTBot(Bot, OpenAIImage):
     def get_local_wechat_pic_base64(self, wechat_pic_path):
         base64_wechat_pic = None
         try:
-            file_path = f"/Users/shanhouwang/PycharmProjects/chatgpt-wechat/{wechat_pic_path}"
+            file_path = f"/Users/shawn/PycharmProjects/chatgpt-on-wechat/{wechat_pic_path}"
             with open(file_path, "rb") as file:
                 base64_wechat_pic = base64.b64encode(file.read()).decode("utf-8")
         except Exception as e:
@@ -94,13 +94,6 @@ class ChatGPTBot(Bot, OpenAIImage):
 
     def is_just_wechat_pic(self, input_string):
         pattern = r"^wechat_tmp/\d{6}-\d{6}\.png$"
-        if re.match(pattern, input_string):
-            return True
-        else:
-            return False
-
-    def is_just_desc_wechat_pic(self, input_string):
-        pattern = r"^desc wechat_tmp/\d{6}-\d{6}\.png$"
         if re.match(pattern, input_string):
             return True
         else:
@@ -202,24 +195,27 @@ class ChatGPTBot(Bot, OpenAIImage):
             check_prefix_mj_v = Utils.check_prefix_mj_v(query)
             check_prefix_mj_r = Utils.check_prefix_mj_r(query)
             try:
-                is_just_desc_wechat_pic = self.is_just_desc_wechat_pic(query)
                 image_http_urls, image_local_urls = self.extract_http_local_urls(query)
                 logger.info(f"{image_http_urls} {image_local_urls}")
                 wechat_pic_path = self.get_wechat_pic(query)
+                wechat_http_path = Utils.get_http_pic(query)
                 use_simple_change = self.is_valid_format(query)
                 base64_wechat_pic = None
-                if wechat_pic_path:
-                    base64_wechat_pic = f"data:image/png;base64,{self.get_local_wechat_pic_base64(wechat_pic_path)}"
-                if is_just_desc_wechat_pic:
-                    url = "http://10.253.63.241:8080/mj/submit/describe"
+                if Utils.is_just_desc_wechat_pic(query) or Utils.is_just_desc_http_pic(query):
+                    if wechat_pic_path:
+                        base64_wechat_pic = f"data:image/png;base64,{self.get_local_wechat_pic_base64(wechat_pic_path)}"
+                    elif wechat_http_path:
+                        base64_wechat_pic = f"data:image/png;base64,{self.get_http_file_base64(wechat_http_path)}"
+                    url = "http://192.168.0.104:8080/mj/submit/describe"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
                     response = requests.request("POST", url, headers=headers, data=json.dumps({"base64": base64_wechat_pic}))
                     logger.info(f"[describe]: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
                     description = response.json()["description"]
-                elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(image_local_urls) > 1:
-                    url = "http://10.253.63.241:8080/mj/submit/blend"
+                elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(
+                        image_local_urls) > 1:
+                    url = "http://192.168.0.104:8080/mj/submit/blend"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
                     base64_array = []
                     for http_url in image_http_urls:
@@ -230,21 +226,24 @@ class ChatGPTBot(Bot, OpenAIImage):
                         local_file_base64 = self.get_local_wechat_pic_base64(path)
                         if local_file_base64:
                             base64_array.append(f"data:image/png;base64,{self.get_local_wechat_pic_base64(path)}")
-                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64Array": base64_array, "dimensions": "SQUARE"}))
+                    response = requests.request("POST", url, headers=headers,
+                                                data=json.dumps({"base64Array": base64_array, "dimensions": "SQUARE"}))
                     logger.info(f"[blend]: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
                     description = response.json()["description"]
                 elif use_simple_change:
-                    url = "http://10.253.63.241:8080/mj/submit/simple-change"
+                    url = "http://192.168.0.104:8080/mj/submit/simple-change"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
-                    response = requests.request("POST", url, headers=headers, data=json.dumps({"content": query.upper()}))
+                    response = requests.request("POST", url, headers=headers,
+                                                data=json.dumps({"content": query.upper()}))
                     logger.info(f"[simple-change] query: {query}, {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
                     description = response.json()["description"]
-                elif (use_mj_prefix is True or use_sd_prefix is True) and (check_prefix_mj_u or check_prefix_mj_v or check_prefix_mj_r):
-                    url = "http://10.253.63.241:8080/mj/submit/change"
+                elif (use_mj_prefix is True or use_sd_prefix is True) and (
+                        check_prefix_mj_u or check_prefix_mj_v or check_prefix_mj_r):
+                    url = "http://192.168.0.104:8080/mj/submit/change"
                     action = None
                     index = None
                     if check_prefix_mj_u:
@@ -270,9 +269,13 @@ class ChatGPTBot(Bot, OpenAIImage):
                     result_id = response.json()["result"]
                     description = response.json()["description"]
                 else:
+                    if wechat_pic_path:
+                        base64_wechat_pic = f"data:image/png;base64,{self.get_local_wechat_pic_base64(wechat_pic_path)}"
+                    elif wechat_http_path:
+                        base64_wechat_pic = f"data:image/png;base64,{self.get_http_file_base64(wechat_http_path)}"
                     if use_mj_prefix is True or use_sd_prefix is True:
                         query = Utils.remove_prefix_mj_sd(query)
-                    url = "http://10.253.63.241:8080/mj/submit/imagine"
+                    url = "http://192.168.0.104:8080/mj/submit/imagine"
                     headers = {"Content-Type": "application/json", "Accept": "application/json"}
                     if base64_wechat_pic:
                         query_new = self.remove_wechat_pic_value(query)
@@ -280,7 +283,8 @@ class ChatGPTBot(Bot, OpenAIImage):
                         query_new = query.rstrip()
                     if len(query_new) < 1:
                         return None
-                    response = requests.request("POST", url, headers=headers, data=json.dumps({"base64": base64_wechat_pic, "prompt": query_new}))
+                    response = requests.request("POST", url, headers=headers,
+                                                data=json.dumps({"base64": base64_wechat_pic, "prompt": query_new}))
                     logger.info(f"[imagine] query: {query_new}, {base64_wechat_pic is not None} {response.json()} ")
                     code = response.json()["code"]
                     result_id = response.json()["result"]
@@ -292,7 +296,7 @@ class ChatGPTBot(Bot, OpenAIImage):
                     progress_60_80_once = True
                     progress_90_100_once = True
                     start_time = time.time()
-                    file_name = f"/Users/shanhouwang/PycharmProjects/chatgpt-wechat/channel/mj_notify_data_{result_id}.txt"
+                    file_name = f"/Users/shawn/PycharmProjects/chatgpt-on-wechat/channel/mj_notify_data_{result_id}.txt"
                     while True:
                         logger.info(file_name)
                         # 进行需要轮询的操作
@@ -306,7 +310,8 @@ class ChatGPTBot(Bot, OpenAIImage):
                                     mj_success = json_data.get("status") == "SUCCESS"
                                     if mj_success and json_data.get("action") == "DESCRIBE":
                                         prompts_desc = json_data.get("prompt")
-                                        itchat.send_msg(f"任务ID: {result_id} {prompt}... 进度100%", toUserName=context["receiver"])
+                                        itchat.send_msg(f"任务ID: {result_id} {prompt}... 进度100%",
+                                                        toUserName=context["receiver"])
                                         itchat.send_msg(json_data.get("imageUrl"), toUserName=context["receiver"])
                                         os.remove(file_name)
                                         break

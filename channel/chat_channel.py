@@ -146,7 +146,7 @@ class ChatChannel(Channel):
             if img_match_prefix:
                 content = content.replace(img_match_prefix, "", 1)
                 context.type = ContextType.IMAGE_CREATE
-            elif self.is_just_desc_wechat_pic(content):
+            elif Utils.is_just_desc_wechat_pic(content) or Utils.is_just_desc_http_pic(content):
                 context.type = ContextType.IMAGE_CREATE
             elif (len(image_http_urls) > 0 and len(image_local_urls) > 0) or len(image_http_urls) > 1 or len(image_local_urls) > 1:
                 context.type = ContextType.IMAGE_CREATE
@@ -179,13 +179,6 @@ class ChatChannel(Channel):
         image_local_urls = re.findall(pattern, input_string, re.IGNORECASE)
 
         return image_http_urls, image_local_urls
-
-    def is_just_desc_wechat_pic(self, input_string):
-        pattern = r"^desc wechat_tmp/\d{6}-\d{6}\.png$"
-        if re.match(pattern, input_string):
-            return True
-        else:
-            return False
 
     def _handle(self, context: Context):
         if context is None or not context.content:

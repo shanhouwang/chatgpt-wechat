@@ -19,7 +19,8 @@ class Utils:
     @staticmethod
     def check_prefix_mj(input_string):
         return input_string.startswith("$mj") or input_string.startswith("mj ") or Utils.check_prefix_mj_u(
-            input_string) or Utils.check_prefix_mj_v(input_string) or Utils.check_prefix_mj_r(input_string)
+            input_string) or Utils.check_prefix_mj_v(input_string) or Utils.check_prefix_mj_r(
+            input_string) or Utils.is_just_desc_http_pic(input_string) or Utils.is_just_desc_wechat_pic(input_string)
 
     @staticmethod
     def check_prefix_sd(input_string):
@@ -89,3 +90,21 @@ class Utils:
             return True
         else:
             return False
+
+    @staticmethod
+    def is_just_desc_http_pic(input_string):
+        pattern = r"^desc http[s]?://[^\s]+(?:jpg|jpeg|png|gif|bmp|svg)$"
+        if re.match(pattern, input_string):
+            return True
+        else:
+            return False
+
+    @staticmethod
+    def get_http_pic(input_string):
+        pattern = r"(http[s]?://[^\s]+(?:jpg|jpeg|png|gif|bmp|svg))"
+        match = re.search(pattern, input_string)
+        if match:
+            matched_value = match.group(1)
+            return matched_value
+        else:
+            return None
